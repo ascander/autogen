@@ -2,6 +2,46 @@
 license_file = "LICENSE"
 description-file = "README.md"
 
+[tool.poetry]
+name = "pyautogen"
+version = "0.1.14"
+description = "Enabling Next-Gen LLM Applications via Multi-Agent Conversation Framework"
+readme = "README.md"
+authors = ["AutoGen <auto-gen@outlook.com>"]
+packages = [
+  { include = "autogen" }
+]
+
+[tool.poetry.dependencies]
+python = ">=3.8,<3.13"
+openai = "^0.28.1"
+diskcache = "^5.6.3"
+termcolor = "^2.3.0"
+flaml = "^2.1.1"
+python-dotenv = "^1.0.0"
+
+[tool.poetry.extras]
+blendsearch = ["flaml"]
+mathchat = ["sympy", "pydantic", "wolframalpha"]
+retrievechat = ["chromadb", "tiktoken", "sentence_transformers", "pypdf", "ipython"]
+teachable = ["chromadb"]
+
+[tool.poetry.group.test.dependencies]
+chromadb = "^0.4.15"
+lancedb = "^0.3.3"
+coverage = "^7.3.2"
+datasets = "^2.14.6"
+ipykernel = "^6.26.0"
+nbconvert = "^7.10.0"
+nbformat = "^5.9.2"
+pre-commit = "^3.5.0"
+pytest-asyncio = "^0.21.1"
+sympy = "^1.12"
+tiktoken = "^0.5.1"
+wolframalpha = "^5.0.0"
+pydantic = "1.10.9"
+pytest = "~7.0.0"
+qdrant-client = {version = "^1.6.4", extras = ["fastembed"]}
 
 [tool.pytest.ini_options]
 addopts = '-m "not conda"'
