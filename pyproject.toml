@@ -13,12 +13,13 @@ packages = [
 ]
 
 [tool.poetry.dependencies]
-python = ">=3.8,<3.13"
+python = ">=3.9,<3.13"
 openai = "^0.28.1"
 diskcache = "^5.6.3"
 termcolor = "^2.3.0"
 flaml = "^2.1.1"
 python-dotenv = "^1.0.0"
+llm-gateway-client = { file = "lib/llm_gateway_client-1.0.0-py3-none-any.whl" }
 
 [tool.poetry.extras]
 blendsearch = ["flaml"]
