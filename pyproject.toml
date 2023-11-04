@@ -44,6 +44,10 @@ pydantic = "1.10.9"
 pytest = "~7.0.0"
 qdrant-client = {version = "^1.6.4", extras = ["fastembed"]}
 
+
+[tool.poetry.group.dev.dependencies]
+jupyterlab = "^4.0.8"
+
 [tool.pytest.ini_options]
 addopts = '-m "not conda"'
 markers = [
@@ -90,3 +94,7 @@ unfixable = ["F401"]
 [tool.ruff.mccabe]
 # Unlike Flake8, default to a complexity level of 10.
 max-complexity = 10
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
