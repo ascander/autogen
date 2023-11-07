@@ -47,6 +47,7 @@ qdrant-client = {version = "^1.6.4", extras = ["fastembed"]}
 
 [tool.poetry.group.dev.dependencies]
 jupyterlab = "^4.0.8"
+black = "^23.10.1"
 
 [tool.pytest.ini_options]
 addopts = '-m "not conda"'
