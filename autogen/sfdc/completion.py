@@ -81,8 +81,7 @@ class Completion(oai_Completion):
         retry_wait_time = config.pop("retry_wait_time", cls.retry_wait_time)
         while True:
             try:
-                event_loop = asyncio.get_event_loop()
-                result = event_loop.run_until_complete(cls._complete_request(config, use_chat_completion))
+                result = asyncio.run(cls._complete_request(config, use_chat_completion))
             except ServiceException as e:
                 # HTTP status codes 5XX - may be transient
                 logger.info(f"got service exception ({e.status}) {e.reason} - retrying in {retry_wait_time}s")
