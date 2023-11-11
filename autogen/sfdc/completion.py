@@ -260,6 +260,216 @@ class Completion(oai_Completion):
 
             return result
 
+    @classmethod
+    def _eval(cls, config: dict, prune=True, eval_only=False):
+        """Evaluate the given config as the hyperparameter setting for the openai api call.
+
+        Args:
+            config (dict): Hyperparameter setting for the openai api call.
+            prune (bool, optional): Whether to enable pruning. Defaults to True.
+            eval_only (bool, optional): Whether to evaluate only
+              (ignore the inference budget and do not rasie error when a request fails).
+              Defaults to False.
+
+        Returns:
+            dict: Evaluation results.
+        """
+        cost = 0
+        data = cls.data
+        params = cls._get_params_for_create(config)
+        model = params["model"]
+        data_length = len(data)
+        price = cls.price1K.get(model)
+        price_input, price_output = price if isinstance(price, tuple) else (price, price)
+        inference_budget = getattr(cls, "inference_budget", None)
+        prune_hp = getattr(cls, "_prune_hp", "n")
+        metric = cls._metric
+        config_n = params.get(prune_hp, 1)  # default value in OpenAI is 1
+        max_tokens = params.get(
+            "max_tokens", np.inf if model in cls.chat_models or issubclass(cls, ChatCompletion) else 16
+        )
+        target_output_tokens = None
+        if not cls.avg_input_tokens:
+            input_tokens = [None] * data_length
+        prune = prune and inference_budget and not eval_only
+        if prune:
+            region_key = cls._get_region_key(config)
+            max_valid_n = cls._get_max_valid_n(region_key, max_tokens)
+            if cls.avg_input_tokens:
+                target_output_tokens = (inference_budget * 1000 - cls.avg_input_tokens * price_input) / price_output
+                # max_tokens bounds the maximum tokens
+                # so using it we can calculate a valid n according to the avg # input tokens
+                max_valid_n = max(
+                    max_valid_n,
+                    int(target_output_tokens // max_tokens),
+                )
+            if config_n <= max_valid_n:
+                start_n = config_n
+            else:
+                min_invalid_n = cls._get_min_invalid_n(region_key, max_tokens)
+                if min_invalid_n is not None and config_n >= min_invalid_n:
+                    # prune this config
+                    return {
+                        "inference_cost": np.inf,
+                        metric: np.inf if cls._mode == "min" else -np.inf,
+                        "cost": cost,
+                    }
+                start_n = max_valid_n + 1
+        else:
+            start_n = config_n
+            region_key = None
+        num_completions, previous_num_completions = start_n, 0
+        n_tokens_list, result, responses_list = [], {}, []
+        while True:  # n <= config_n
+            params[prune_hp] = num_completions - previous_num_completions
+            data_limit = 1 if prune else data_length
+            prev_data_limit = 0
+            data_early_stop = False  # whether data early stop happens for this n
+            while True:  # data_limit <= data_length
+                # limit the number of data points to avoid rate limit
+                for i in range(prev_data_limit, data_limit):
+                    logger.debug(f"num_completions={num_completions}, data instance={i}")
+                    data_i = data[i]
+                    response = cls.create(data_i, raise_on_ratelimit_or_timeout=eval_only, **params)
+                    if response == -1:  # rate limit/timeout error, treat as invalid
+                        cls._update_invalid_n(prune, region_key, max_tokens, num_completions)
+                        result[metric] = 0
+                        result["cost"] = cost
+                        return result
+                    # evaluate the quality of the responses
+                    responses = cls.extract_text_or_function_call(response)
+                    usage = response["usage"]
+                    n_input_tokens = usage["prompt_tokens"]
+                    n_output_tokens = usage.get("completion_tokens", 0)
+                    if not cls.avg_input_tokens and not input_tokens[i]:
+                        # store the # input tokens
+                        input_tokens[i] = n_input_tokens
+                    query_cost = response["cost"]
+                    cls._total_cost += query_cost
+                    cost += query_cost
+                    if cls.optimization_budget and cls._total_cost >= cls.optimization_budget and not eval_only:
+                        # limit the total tuning cost
+                        return {
+                            metric: 0,
+                            "total_cost": cls._total_cost,
+                            "cost": cost,
+                        }
+                    if previous_num_completions:
+                        n_tokens_list[i] += n_output_tokens
+                        responses_list[i].extend(responses)
+                        # Assumption 1: assuming requesting n1, n2 responses separatively then combining them
+                        # is the same as requesting (n1+n2) responses together
+                    else:
+                        n_tokens_list.append(n_output_tokens)
+                        responses_list.append(responses)
+                avg_n_tokens = np.mean(n_tokens_list[:data_limit])
+                rho = (
+                    (1 - data_limit / data_length) * (1 + 1 / data_limit)
+                    if data_limit << 1 > data_length
+                    else (1 - (data_limit - 1) / data_length)
+                )
+                # Hoeffding-Serfling bound
+                ratio = 0.1 * np.sqrt(rho / data_limit)
+                if target_output_tokens and avg_n_tokens > target_output_tokens * (1 + ratio) and not eval_only:
+                    cls._update_invalid_n(prune, region_key, max_tokens, num_completions)
+                    result[metric] = 0
+                    result["total_cost"] = cls._total_cost
+                    result["cost"] = cost
+                    return result
+                if (
+                    prune
+                    and target_output_tokens
+                    and avg_n_tokens <= target_output_tokens * (1 - ratio)
+                    and (num_completions < config_n or num_completions == config_n and data_limit == data_length)
+                ):
+                    # update valid n
+                    cls._max_valid_n_per_max_tokens[region_key] = valid_n = cls._max_valid_n_per_max_tokens.get(
+                        region_key, {}
+                    )
+                    valid_n[max_tokens] = max(num_completions, valid_n.get(max_tokens, 0))
+                    if num_completions < config_n:
+                        # valid already, skip the rest of the data
+                        data_limit = data_length
+                        data_early_stop = True
+                        break
+                prev_data_limit = data_limit
+                if data_limit < data_length:
+                    data_limit = min(data_limit << 1, data_length)
+                else:
+                    break
+            # use exponential search to increase n
+            if num_completions == config_n:
+                for i in range(data_limit):
+                    data_i = data[i]
+                    responses = responses_list[i]
+                    metrics = cls._eval_func(responses, **data_i)
+                    if result:
+                        for key, value in metrics.items():
+                            if isinstance(value, (float, int)):
+                                result[key] += value
+                    else:
+                        result = metrics
+                for key in result.keys():
+                    if isinstance(result[key], (float, int)):
+                        result[key] /= data_limit
+                result["total_cost"] = cls._total_cost
+                result["cost"] = cost
+                if not cls.avg_input_tokens:
+                    cls.avg_input_tokens = np.mean(input_tokens)
+                    if prune:
+                        target_output_tokens = (
+                            inference_budget * 1000 - cls.avg_input_tokens * price_input
+                        ) / price_output
+                result["inference_cost"] = (avg_n_tokens * price_output + cls.avg_input_tokens * price_input) / 1000
+                break
+            else:
+                if data_early_stop:
+                    previous_num_completions = 0
+                    n_tokens_list.clear()
+                    responses_list.clear()
+                else:
+                    previous_num_completions = num_completions
+                num_completions = min(num_completions << 1, config_n)
+        return result
+
+    @classmethod
+    def _construct_params(cls, context, config, prompt=None, messages=None, allow_format_str_template=False):
+        params = config.copy()
+        model = config["model"]
+        prompt = config.get("prompt") if prompt is None else prompt
+        messages = config.get("messages") if messages is None else messages
+        # either "prompt" should be in config (for being compatible with non-chat models)
+        # or "messages" should be in config (for tuning chat models only)
+        if prompt is None and (model in cls.chat_models or issubclass(cls, ChatCompletion)):
+            if messages is None:
+                raise ValueError("Either prompt or messages should be in config for chat models.")
+        if prompt is None:
+            params["messages"] = (
+                [
+                    {
+                        **m,
+                        "content": cls.instantiate(m["content"], context, allow_format_str_template),
+                    }
+                    if m.get("content")
+                    else m
+                    for m in messages
+                ]
+                if context
+                else messages
+            )
+        elif model in cls.chat_models or issubclass(cls, ChatCompletion):
+            # convert prompt to messages
+            params["messages"] = [
+                {
+                    "role": "user",
+                    "content": cls.instantiate(prompt, context, allow_format_str_template),
+                },
+            ]
+            params.pop("prompt", None)
+        else:
+            params["prompt"] = cls.instantiate(prompt, context, allow_format_str_template)
+        return params
+
 
 class ChatCompletion(Completion):
     """A class for the LLM Gateway chat completion API."""
