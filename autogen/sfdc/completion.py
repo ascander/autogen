@@ -1,10 +1,11 @@
 import asyncio
-import logging
-import sys
 import diskcache
+import logging
+import numpy as np
+import sys
 
 from dotenv import dotenv_values
-from time import sleep, time
+from time import sleep
 from typing import Callable, Dict, List, Optional
 
 from .utils import (
@@ -158,7 +159,7 @@ class Completion(oai_Completion):
                 - `pass_filter`: whether the response passes the filter function. None if no filter is provided.
         """
         if GATEWAY_ERROR:
-            raise GATEWAY_ERROR
+            raise GATEWAY_ERROR  # type:ignore
 
         # Warn if a config list was provided but is empty
         if type(config_list) is list and len(config_list) == 0:
@@ -185,7 +186,7 @@ class Completion(oai_Completion):
                         return response
                     pass_filter = filter_func is None or filter_func(
                         context=context, base_config=config, response=response
-                    )
+                    )  # type:ignore
                     if pass_filter or i == last:
                         response["cost"] = cost + response["cost"]
                         response["config_id"] = i
@@ -196,18 +197,20 @@ class Completion(oai_Completion):
                     logger.debug(f"completion failed with ({e.status}) {e.reason} with config {i}", exc_info=True)
                     if i == last:
                         raise
-        params = cls._construct_params(context, config, allow_format_str_template=allow_format_str_template)
+        params = cls._construct_params(
+            context, config, allow_format_str_template=allow_format_str_template
+        )  # type:ignore
         if not use_cache:
             logger.debug("skipping cache")
             return cls._get_response(
                 params, raise_on_ratelimit_or_timeout=raise_on_ratelimit_or_timeout, use_cache=False
-            )
+            )  # type:ignore
         seed = cls.seed
         if "seed" in params:
             cls.set_cache(params.pop("seed"))
         with diskcache.Cache(cls.cache_path) as cls._cache:
             cls.set_cache(seed)
-            return cls._get_response(params, raise_on_ratelimit_or_timeout=raise_on_ratelimit_or_timeout)
+            return cls._get_response(params, raise_on_ratelimit_or_timeout=raise_on_ratelimit_or_timeout)  # type:ignore
 
     @classmethod
     async def _create_chat_session(cls):
@@ -243,13 +246,17 @@ class Completion(oai_Completion):
             api = DefaultApi(client)
             try:
                 if use_chat_completion:
+                    logger.debug("using chat completion")
                     # Create chat session if needed and call the chat completion endpoint
                     if cls.chat_session_id is None:
+                        logger.debug("initializing chat session")
                         await cls._create_chat_session()
                     request = as_chat_generation_request(config)
+                    logger.debug(f"calling chat completion for session {cls.chat_session_id}")
                     response = await api.chat_generations(str(cls.chat_session_id), request)
                     result = convert_chat_generation_response(response)
                 else:
+                    logger.debug("using completion")
                     # Call the completion endpoint
                     request = as_generation_request(config)
                     response = await api.generations(cls.x_llm_provider, request)
@@ -296,7 +303,9 @@ class Completion(oai_Completion):
             region_key = cls._get_region_key(config)
             max_valid_n = cls._get_max_valid_n(region_key, max_tokens)
             if cls.avg_input_tokens:
-                target_output_tokens = (inference_budget * 1000 - cls.avg_input_tokens * price_input) / price_output
+                target_output_tokens = (
+                    inference_budget * 1000 - cls.avg_input_tokens * price_input
+                ) / price_output  # type:ignore
                 # max_tokens bounds the maximum tokens
                 # so using it we can calculate a valid n according to the avg # input tokens
                 max_valid_n = max(
