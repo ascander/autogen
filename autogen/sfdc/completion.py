@@ -89,7 +89,7 @@ class Completion(oai_Completion):
                 sleep(retry_wait_time)
             except ApiException as e:
                 # HTTP status codes 4XX - retrying is probably a waste of time
-                logger.warn(f"got API exception ({e.status}) {e.reason} - returning -1")
+                logger.warning(f"got API exception ({e.status}) {e.reason} - returning -1")
                 response = -1
                 if use_cache:
                     logger.debug(f"caching empty response for key {key}")
@@ -194,14 +194,12 @@ class Completion(oai_Completion):
                         return response
                     cost += response["cost"]
                 except ApiException as e:
-                    logger.debug(f"completion failed with ({e.status}) {e.reason} with config {i}", exc_info=True)
                     if i == last:
                         raise
         params = cls._construct_params(
             context, config, allow_format_str_template=allow_format_str_template
         )  # type:ignore
         if not use_cache:
-            logger.debug("skipping cache")
             return cls._get_response(
                 params, raise_on_ratelimit_or_timeout=raise_on_ratelimit_or_timeout, use_cache=False
             )  # type:ignore
@@ -262,7 +260,6 @@ class Completion(oai_Completion):
                     response = await api.generations(cls.x_llm_provider, request)
                     result = convert_generation_response(response)
             except ApiException as e:
-                logger.warn(f"Caught exception: ({e.status}) {e.reason}")
                 raise e
 
             return result
