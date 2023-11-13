@@ -1,3 +1,4 @@
+from typing import Dict
 import pytest
 from autogen.sfdc.completion import ChatCompletion, Completion
 
@@ -134,3 +135,30 @@ def test_logged_history():
     _ = Completion.create(**config)
 
     assert Completion.logged_history is not {}
+
+
+def test_filter_func():
+    model_list = ["text-davinci-002", "text-davinci-003", "gpt-3.5-turbo"]
+    config_list = [{"model": model} for model in model_list]
+
+    def yes_or_no_filter(context, response, **_):
+        return context.get("yes_or_no_choice", False) is False or any(
+            text in ["Yes.", "No."] for text in Completion.extract_text(response)
+        )
+
+    response = Completion.create(
+        context={"yes_or_no_choice": True},
+        config_list=config_list,
+        prompt="Is 37 a prime number? Please answer 'Yes.' or 'No.'",
+        filter_func=yes_or_no_filter,  # type:ignore
+    )
+    assert Completion.extract_text(response)[0] in ["Yes.", "No."]
+
+
+def test_multi_model():
+    models = ["gpt-4", "gpt-3.5-turbo"]
+    config_list = [{"model": model} for model in models]
+
+    response = Completion.create(config_list=config_list, prompt="Hi")
+
+    assert response is not -1
